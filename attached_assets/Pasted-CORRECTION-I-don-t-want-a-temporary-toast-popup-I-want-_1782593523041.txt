@@ -1,0 +1,70 @@
+CORRECTION — I don't want a temporary toast popup. I want this 
+specific behavior instead:
+
+When a user (driver or customer) OPENS the app (loads the 
+dashboard) and they have an UNREAD admin reply waiting (the red 
+dot condition), the support chat panel — exactly like the one 
+shown in this screenshot — should AUTOMATICALLY OPEN BY ITSELF 
+immediately upon entering the dashboard. The user should not need 
+to click the headset/support icon manually to see it.
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Check unread status on dashboard load
+═══════════════════════════════════════════════════════════════
+
+When the driver-dashboard (or customer dashboard) component mounts:
+
+1. Fetch whether there's an unread admin reply for this user 
+   (same logic already used for the red dot — likely: latest 
+   message in support_messages for this user_id has 
+   sender_type='admin' and hasn't been viewed yet)
+
+2. If unread = true → automatically open the support chat panel 
+   (the same modal/panel shown in the screenshot) WITHOUT requiring 
+   the user to click the headset icon
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Only auto-open ONCE per new unread message
+═══════════════════════════════════════════════════════════════
+
+- This auto-open should happen once when the dashboard first loads 
+  with an unread reply pending — not repeatedly on every render
+- Once the user closes the panel (clicks the X) or it's marked as 
+  viewed, don't auto-open it again until a NEW admin reply arrives
+- If the user navigates within the app (e.g. dashboard → orders → 
+  back to dashboard) without a new message arriving, do NOT 
+  re-trigger the auto-open
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Also trigger if reply arrives WHILE app is open
+═══════════════════════════════════════════════════════════════
+
+If the user is already on the dashboard (app open, chat panel 
+closed) and a NEW admin reply arrives via the existing Supabase 
+realtime subscription:
+- Automatically open the support chat panel right then, showing 
+  the new message, exactly as if they had just loaded the dashboard 
+  with an unread message
+
+═══════════════════════════════════════════════════════════════
+## STEP 4 — Don't auto-open if chat is already open
+═══════════════════════════════════════════════════════════════
+
+If the support chat panel is already open when a new admin reply 
+arrives, just let it appear normally in the conversation (no need 
+to "open" something that's already open).
+
+═══════════════════════════════════════════════════════════════
+## STEP 5 — Test with two real accounts
+═══════════════════════════════════════════════════════════════
+
+1. Driver logs out / has the app closed
+2. Admin sends a reply to that driver
+3. Driver opens the app (loads dashboard) → the support chat panel 
+   shown in the screenshot must appear automatically, immediately, 
+   without any click
+4. Separately test: driver already on dashboard with chat closed, 
+   admin sends a reply → panel opens automatically in real time
+
+Show me confirmation this was actually tested with two real 
+accounts side by side, not just a code description.

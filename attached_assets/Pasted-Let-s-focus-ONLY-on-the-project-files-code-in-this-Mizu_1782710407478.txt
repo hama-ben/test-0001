@@ -1,0 +1,77 @@
+Let's focus ONLY on the project files/code in this Mizu Replit 
+workspace — do not touch any external hosting/server settings 
+(Render dashboard, Netlify dashboard, etc.).
+
+═══════════════════════════════════════════════════════════════
+## CONTEXT — confirmed facts
+═══════════════════════════════════════════════════════════════
+
+Render backend is healthy:
+  GET https://mizu-nyv1.onrender.com/api/healthz → 200 OK
+  GET https://mizu-nyv1.onrender.com/api/auth/login → "Cannot GET" 
+    (route exists, just rejects GET — expected, POST-only route)
+
+But testing login through the deployed frontend (on Netlify, e.g. 
+uisite-cranachan-3b40c4.netlify.app) gives:
+  Cannot POST /api/auth/login
+
+This strongly suggests the FRONTEND CODE itself (inside this Mizu 
+project) is calling a RELATIVE path ('/api/auth/login') instead 
+of the FULL Render URL. When the frontend is hosted on Netlify 
+(different domain than Render), relative paths resolve to 
+Netlify's own domain, which has no backend — hence 404.
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Find where the API base URL is defined in the code
+═══════════════════════════════════════════════════════════════
+
+Search the codebase:
+  grep -r "auth/login" artifacts/talabati/src/
+  grep -r "VITE_API_BASE_URL\|API_BASE_URL\|apiBaseUrl" artifacts/talabati/src/
+
+Show me:
+1. The exact file/code that builds the URL for login (and other 
+   API calls)
+2. Is it using a relative path like fetch('/api/auth/login') or 
+   an environment variable like fetch(`${API_BASE_URL}/api/auth/login`)?
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Check the .env file in this project
+═══════════════════════════════════════════════════════════════
+
+Show me:
+  cat artifacts/talabati/.env 2>/dev/null
+  cat artifacts/talabati/.env.production 2>/dev/null
+
+Does VITE_API_BASE_URL exist, and what value does it have?
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Fix the code to always use the full Render URL
+═══════════════════════════════════════════════════════════════
+
+Make sure the API client code ALWAYS constructs full absolute 
+URLs pointing to Render:
+
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
+    'https://mizu-nyv1.onrender.com';
+
+  fetch(`${API_BASE_URL}/api/auth/login`, ...)
+
+Fix this in one central place if a central API client file exists.
+
+═══════════════════════════════════════════════════════════════
+## STEP 4 — Update the project's own .env file
+═══════════════════════════════════════════════════════════════
+
+  VITE_API_BASE_URL=https://mizu-nyv1.onrender.com
+
+═══════════════════════════════════════════════════════════════
+## STEP 5 — Show me the diff before committing
+═══════════════════════════════════════════════════════════════
+
+Show me exactly what changed before pushing to GitHub.
+
+═══════════════════════════════════════════════════════════════
+## Do not touch Render or Netlify dashboards — only fix the 
+## project's own source code and .env files
+═══════════════════════════════════════════════════════════════

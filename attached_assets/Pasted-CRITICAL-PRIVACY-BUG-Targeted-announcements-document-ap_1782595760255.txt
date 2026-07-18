@@ -1,0 +1,104 @@
+CRITICAL PRIVACY BUG: Targeted announcements (document approval/
+rejection, payment approval/rejection) are visible to ALL drivers, 
+not just the specific driver they're meant for. A driver should 
+NEVER see another driver's private notification.
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Verify the actual data first
+═══════════════════════════════════════════════════════════════
+
+Run this in Supabase SQL Editor and show me the result:
+
+  SELECT id, title, content, target_audience, created_at 
+  FROM announcements 
+  ORDER BY created_at DESC LIMIT 20;
+
+I need to see: are targeted announcements (document approval, 
+payment approval, etc.) actually being saved with 
+`target_audience = '[specific driver's user id]'`, or are they 
+accidentally being saved with `target_audience = 'all'` / 
+`'Drivers'` / `'Everyone'`?
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Check the fetch query on the user side
+═══════════════════════════════════════════════════════════════
+
+Show me the EXACT current code (in Mizu) that fetches announcements 
+for a logged-in user (likely in the useAnnouncements hook or 
+similar). I need to see the WHERE clause/filter logic.
+
+It should look something like:
+  WHERE target_audience = 'all' 
+     OR target_audience = userType  -- e.g. 'Drivers'
+     OR target_audience = currentUserId  -- exact match for targeted
+
+If the filter is missing the `target_audience = currentUserId` 
+exact-match condition, or if it's using `LIKE`/`includes` instead 
+of an exact equality check, that could let unrelated announcements 
+leak through.
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Check RLS on the announcements table
+═══════════════════════════════════════════════════════════════
+
+Run this to see current RLS policies:
+  SELECT policyname, cmd, qual 
+  FROM pg_policies 
+  WHERE tablename = 'announcements';
+
+If RLS is disabled or has a permissive `USING (true)` policy on 
+SELECT, every authenticated user can fetch every row from the 
+client directly (bypassing any client-side JS filtering) — this 
+would be the real root cause if the client-side filter looks 
+correct but driver B still sees driver A's message.
+
+═══════════════════════════════════════════════════════════════
+## STEP 4 — Fix based on findings
+═══════════════════════════════════════════════════════════════
+
+Case A — Backend approve/reject handlers are saving 
+target_audience incorrectly (e.g. 'all' instead of the driver's id):
+  Fix the admin approve/reject handlers (in the admin project) to 
+  always set target_audience = the specific driverId for these 
+  personal notifications. Flag this clearly if it's an admin-side 
+  fix needed, since I'll need to send a matching prompt there.
+
+Case B — Client-side filter in Mizu is too loose:
+  Fix the WHERE clause to require an EXACT match:
+    target_audience === 'all' (or whatever broadcast values exist)
+    OR target_audience === currentUserId (exact, not partial match)
+
+Case C — RLS allows reading all rows regardless of client filter:
+  Add a proper RLS SELECT policy on `announcements`:
+    CREATE POLICY "users_see_own_or_broadcast" ON announcements
+    FOR SELECT TO authenticated
+    USING (
+      target_audience IN ('all', 'Everyone', 'Drivers', 'Customers')
+      OR target_audience = auth.uid()::text
+    )
+  (adjust the broadcast values to match what's actually used)
+
+  Note: if announcements are fetched via a server-side admin 
+  client (service role) rather than directly from the browser, 
+  RLS won't help here — the actual filtering MUST happen correctly 
+  in the server-side query (Case A/B) since service role bypasses 
+  RLS entirely.
+
+═══════════════════════════════════════════════════════════════
+## STEP 5 — Test with two real driver accounts
+═══════════════════════════════════════════════════════════════
+
+1. Approve Driver A's documents → confirm Driver A sees 
+   "تم قبولك بيننا" 
+2. Log in as Driver B (different account) → confirm Driver B does 
+   NOT see Driver A's approval message at all
+3. Repeat for a payment approval/rejection scenario
+4. Repeat for a document rejection scenario
+
+Show me actual confirmation from both accounts, not just a code 
+review.
+
+═══════════════════════════════════════════════════════════════
+## Do not report fixed without showing real test results from 
+## two distinct driver accounts
+═══════════════════════════════════════════════════════════════

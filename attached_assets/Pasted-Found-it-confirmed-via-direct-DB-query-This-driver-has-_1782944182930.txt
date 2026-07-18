@@ -1,0 +1,22 @@
+Found it — confirmed via direct DB query. This driver has 2 separate "approved" payments, reviewed 55 seconds apart (22:09:34 and 22:10:29). Both should have stacked +30 days each, but the final subscription_expires_at only reflects ONE addition. This is the exact race condition risk flagged earlier: the approve endpoint does a SEPARATE READ then WRITE (two awaits, no transaction), so when two approvals happen close together, the second approval reads the SAME stale subscriptionExpiresAt the first one read (before the first write commits), computes the same "new" value, and overwrites — silently losing one addition. This is a classic lost-update race condition.
+
+Please fix this with an ATOMIC update instead of read-then-write:
+
+Replace the current two-step logic (SELECT current value, compute newExpiry in application code, then UPDATE) with a SINGLE atomic SQL UPDATE statement that computes the new value directly in the database using the CURRENT row value at write-time, e.g. (adjust to your ORM's raw SQL syntax):
+
+UPDATE users
+SET subscription_expires_at = GREATEST(subscription_expires_at, now()) + (months * interval '30 days')
+WHERE id = :driverId
+RETURNING subscription_expires_at;
+
+This way, PostgreSQL's row-level locking guarantees each UPDATE reads the true latest value at the moment it executes, even if two approvals fire within milliseconds of each other — there is no window for a stale read.
+
+Apply this to the approve endpoint in admin.ts, replacing the current SELECT-then-UPDATE pattern.
+
+After fixing, also help me manually compensate the specific driver affected by this bug:
+- driver id: e7f29f58-a029-46e3-a831-adc7a76304da
+- Currently has subscription_expires_at = 2026-08-03 21:10:14
+- Should have an additional 30 days added (the lost update from the second approved payment)
+- Provide the exact SQL UPDATE statement to add 30 days to this specific driver's current value, for me to run manually in SQL Editor after reviewing it.
+
+Do not touch Orders, Maps, Drivers routing logic, or unrelated files.

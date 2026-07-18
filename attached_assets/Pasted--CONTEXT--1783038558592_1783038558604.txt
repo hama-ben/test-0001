@@ -1,0 +1,44 @@
+═══════════════════════════════════════════════════════════════
+CONTEXT
+═══════════════════════════════════════════════════════════════
+This project (Mizu, driver app) shares the SAME Supabase database
+with a separate Admin panel project, but each has its own
+completely independent backend server. We just fixed a race
+condition in the ADMIN project's payment-approval backend code
+(admin.ts / data.ts) — that fix does NOT touch this project's code
+at all.
+
+However, we're now seeing that subscription_expires_at for a
+specific driver is STUCK and not updating even after the admin-side
+fix, no matter how many times a payment is approved from the admin
+panel.
+
+═══════════════════════════════════════════════════════════════
+QUESTION — please investigate, do not assume anything
+═══════════════════════════════════════════════════════════════
+1. Does THIS project (Mizu / driver app backend) have its own
+   server-side code that writes to users.subscription_expires_at?
+   Search the entire codebase for every occurrence of
+   "subscription_expires_at" and list every file/line found —
+   include the receipt upload bonus logic, free trial claim, and
+   any other subscription-related write path in THIS project's
+   backend.
+
+2. For each write location found, show me the exact current code —
+   is it a plain SELECT-then-UPDATE (read into a JS variable, then
+   write), or an atomic single SQL statement?
+
+3. Is there any polling, cron job, scheduled task, or repeated
+   client-side write in this project that could be re-writing
+   subscription_expires_at on an interval, potentially overwriting
+   changes made from the admin panel's backend?
+
+4. For the specific driver id e7f29f58-a029-46e3-a831-adc7a76304da,
+   query subscription_payments and any relevant logs in THIS
+   project to see if there's been any recent write attempt from
+   THIS server (not the admin server) around the same time the
+   admin panel approval was tested.
+
+Report findings only — do not apply any fix until we understand
+whether this project's backend is also writing to the same field
+and possibly conflicting with the admin panel's writes.

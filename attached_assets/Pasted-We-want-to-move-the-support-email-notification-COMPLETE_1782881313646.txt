@@ -1,0 +1,116 @@
+We want to move the support email notification COMPLETELY out of 
+the Replit/Render backend and into Supabase directly, so it works 
+independently of any hosting platform.
+
+The goal: when a new row is inserted into support_messages table 
+in Supabase, Supabase itself sends an email notification to the 
+admin automatically — no dependency on Render or Replit.
+
+═══════════════════════════════════════════════════════════════
+## SOLUTION — Supabase Edge Function + Database Webhook
+═══════════════════════════════════════════════════════════════
+
+Create a Supabase Edge Function that:
+1. Receives a webhook trigger when a new row is inserted into 
+   support_messages WHERE sender_type = 'user' (not admin replies)
+2. Sends an email to the admin using Resend API 
+   (https://resend.com — free tier: 100 emails/day, no SMTP 
+   config needed, works natively with Supabase Edge Functions)
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Create the Edge Function
+═══════════════════════════════════════════════════════════════
+
+Create file: supabase/functions/notify-support/index.ts
+
+  import { serve } from "https://deno.land/std/http/server.ts";
+
+  serve(async (req) => {
+    const payload = await req.json();
+    const record = payload.record;
+    
+    // Only notify for user messages, not admin replies
+    if (record.sender_type === 'admin') {
+      return new Response('skipped', { status: 200 });
+    }
+    
+    const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
+    const ADMIN_EMAIL = Deno.env.get('ADMIN_EMAIL');
+    
+    const emailBody = {
+      from: 'Mizu Support <onboarding@resend.dev>',
+      to: ADMIN_EMAIL,
+      subject: `رسالة جديدة من خدمة العملاء`,
+      html: `
+        <div dir="rtl" style="font-family: Arial; padding: 20px;">
+          <h2>رسالة جديدة من خدمة العملاء</h2>
+          <p><strong>المستخدم:</strong> ${record.user_id || 'زائر'}</p>
+          <p><strong>الرسالة:</strong></p>
+          <div style="background:#f5f5f5; padding:15px; border-radius:8px;">
+            ${record.message}
+          </div>
+          <p><strong>التاريخ:</strong> ${new Date(record.created_at).toLocaleString('ar-DZ')}</p>
+          <hr/>
+          <p style="color:#888; font-size:12px;">يمكنك الرد من لوحة الأدمن</p>
+        </div>
+      `
+    };
+    
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(emailBody)
+    });
+    
+    return new Response(JSON.stringify({ ok: res.ok }), { status: 200 });
+  });
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Deploy the Edge Function to Supabase
+═══════════════════════════════════════════════════════════════
+
+  supabase functions deploy notify-support
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Set up Database Webhook in Supabase
+═══════════════════════════════════════════════════════════════
+
+Walk me through exactly how to create a Database Webhook in 
+Supabase Dashboard that:
+- Triggers on: INSERT into support_messages table
+- Calls: the notify-support Edge Function URL
+
+Give me click-by-click steps since I'll do this manually in 
+Supabase Dashboard.
+
+═══════════════════════════════════════════════════════════════
+## STEP 4 — Environment variables in Supabase
+═══════════════════════════════════════════════════════════════
+
+I need to add these in Supabase Dashboard → Edge Functions → 
+Secrets (NOT in Replit):
+  RESEND_API_KEY = [from resend.com — free account]
+  ADMIN_EMAIL = [my personal Gmail]
+
+Guide me on where exactly to add these in Supabase Dashboard.
+
+═══════════════════════════════════════════════════════════════
+## Why Resend instead of Gmail SMTP
+═══════════════════════════════════════════════════════════════
+
+Supabase Edge Functions run on Deno runtime — they cannot use 
+nodemailer or traditional SMTP. Resend has a native fetch-based 
+API that works perfectly in Deno/Edge environments with no 
+additional dependencies.
+
+═══════════════════════════════════════════════════════════════
+## Test after implementing:
+═══════════════════════════════════════════════════════════════
+✅ User sends support message → email arrives in admin Gmail 
+   within seconds
+✅ This works completely independently of Render/Replit — 
+   even if both are down, Supabase handles it automatically
+✅ Admin replies (sender_type='admin') do NOT trigger emails

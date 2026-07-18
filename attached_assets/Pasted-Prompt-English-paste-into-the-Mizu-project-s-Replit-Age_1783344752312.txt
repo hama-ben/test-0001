@@ -1,0 +1,56 @@
+Prompt (English) — paste into the Mizu project's Replit Agent:
+Right now, admin suspend/ban actions have zero effect on the actual Mizu apps. I audited both codebases: PATCH/POST /api/data/users/:id/{suspend,ban,unsuspend,unban} in the admin's api-server correctly flips users.account_status to suspended/banned, but:
+
+requireAuth middleware (artifacts/api-server/src/middlewares/require-auth.ts) never checks account_status — a banned/suspended user's token keeps working on every endpoint.
+POST /auth/login (artifacts/api-server/src/routes/auth.ts:299) never checks account_status either — they can log in fine.
+driver-dashboard.tsx only has blocking overlays for pending and rejected (with a full appeal system via driver_appeals table) — nothing for suspended/banned.
+The consumer app (dashboard.tsx) has no account-status awareness at all — no endpoint even exists for it.
+
+Implement full enforcement end-to-end, for both driver and consumer accounts. Appeals must work for banned users of both types (reuse and generalize the existing appeal system, not a separate one).
+1. Generalize the appeals table to support both user types
+In lib/db/src/schema/index.ts, driverAppealsTable (driver_appeals, column driver_id) is currently driver-only in name but the column is just a text id with no FK type constraint. Rename it conceptually to be user-agnostic:
+
+Add a migration renaming driver_appeals → user_appeals and driver_id → user_id (or, if renaming is judged too risky given existing rows/admin queries on driver_appeals, keep the table/column names as-is and just document clearly in code comments that driver_id now stores any user's id — driver or consumer). Pick whichever is lower-risk, but be explicit in your response about which you chose and why.
+Add a reason column: text("reason") — nullable, storing "rejected" or "banned" so the admin panel can distinguish document-rejection appeals from ban appeals in the same table.
+
+2. Backend: generic account-status endpoint (new)
+Add GET /api/account/:userId/status (protected route, any authenticated user can only fetch their own — verify req.auth.userId === req.params.userId) returning:
+json{ "accountStatus": "pending|approved|rejected|suspended|banned", "userType": "سائق|مستهلك" }
+This is the endpoint both the driver dashboard and the consumer dashboard will poll — don't build two separate endpoints.
+3. Backend: enforcement middleware
+Add a new middleware blockFrozenAccounts in middlewares/ that runs after requireAuth on all protected routers (orders, driver, support-thread, push, ratings, locations — everywhere requireAuth is currently applied). It should:
+
+Look up the caller's accountStatus from usersTable by req.auth.userId.
+If suspended or banned, reject with 403 and a JSON body { error: "...", code: "ACCOUNT_SUSPENDED" } or { error: "...", code: "ACCOUNT_BANNED" }.
+Allowlist these paths so a frozen user can still reach support/appeal: GET /account/:userId/status, GET /appeal and POST /appeal (the generalized appeal endpoints from step 4), GET /support/thread, POST /support/thread/send, POST /auth/logout. Everything else (create/accept orders, update driver status, upload docs, subscription payment, etc.) is blocked.
+To avoid a DB round-trip on every single request, cache the lookup briefly (e.g. an in-memory Map<userId, {status, expiresAt}> with a ~10s TTL, invalidated immediately when step 6's socket event fires) — follow the existing session-store.ts pattern in this codebase for an in-memory map with a sweep interval.
+
+4. Backend: generalize the appeal routes
+Move GET /driver/appeal and POST /driver/appeal (currently in routes/driver.ts:548-601) into a new shared route file routes/appeals.ts, mounted at /appeal for both user types (drop the /driver/ prefix, since consumers need it too). Behavior:
+
+GET /appeal — same as today, keyed off req.auth.userId instead of a route param.
+POST /appeal — same one-pending-appeal-at-a-time guard, but now also store reason = the caller's current accountStatus at submission time (should be "rejected" or "banned" — reject with 400 if the caller's status is neither, so approved/suspended/pending users can't spam appeals).
+Keep driver-upload-docs/rejected-driver-appeal callers working — just update the customFetch URL in driver-dashboard.tsx's RejectedAccountOverlay from /api/driver/appeal to /api/appeal.
+
+5. Backend: realtime freeze via existing socket pattern
+In the admin's suspend/ban/unsuspend/unban handler (artifacts/api-server/src/routes/data.ts:838-955 — this is shared infra between both apps, confirm it's the same api-server package Mizu uses), after the UPDATE ... account_status succeeds, call emitToUser(userId, "account_status_changed", { accountStatus: newStatus }) — reuse the exact emitToUser() helper already in lib/socket-server.ts:101, the same one used for subscription_approved. This lets a logged-in user get frozen/unfrozen instantly instead of waiting for polling.
+6. Frontend: a global gate, not per-page overlays
+In artifacts/talabati/src/App.tsx, add a new top-level component AccountStatusGate (sibling to the existing SessionEvictionGuard, PushSubscriptionGate, etc. — same pattern, rendered inside WouterRouter, before <Router />):
+
+Polls GET /api/account/:userId/status every ~10s via a new generated hook (add it to the OpenAPI spec in lib/api-spec the same way useGetDriverAccount is defined, then regenerate lib/api-client-react).
+Also listens on the socket (reuse getSocket() from lib/socket-client.ts, same pattern as use-subscription-notifications.ts) for account_status_changed and immediately invalidates/refetches this query.
+Also listens on the existing global api-error window event (the one SessionEvictionGuard already listens to) for error.detail.code === "ACCOUNT_SUSPENDED" | "ACCOUNT_BANNED" fired from a global React Query onError (mirror the existing SESSION_EVICTED dispatch in the QueryClient config, lines 79-95 of App.tsx) so a blocked action anywhere triggers the freeze instantly too, not just polling.
+When accountStatus is suspended or banned, render a full-screen overlay (z-[200], same visual language as RejectedAccountOverlay/PendingAccountOverlay in driver-dashboard.tsx — dark backdrop, centered card, RTL) on top of the entire app, for both /dashboard and /driver-dashboard routes alike. Do NOT force logout — the user must stay authenticated to reach the appeal form / support chat.
+
+7. Two overlay variants, both usable by driver or consumer
+
+SuspendedAccountOverlay — softer tone ("حسابك موقوف مؤقتاً"), explains it's temporary, single CTA button "تواصل مع الدعم الفني" that calls useSupportChatStore().open() (same store already used in driver-dashboard.tsx:35,350) — no appeal form, just the support chat.
+BannedAccountOverlay — reuse/extract the existing appeal-form logic from RejectedAccountOverlay (driver-dashboard.tsx:82-237) into a shared component (e.g. components/appeal-overlay.tsx) parameterized by title/body copy, since it'll now be used for both "rejected driver" and "banned user" cases. Keep the Facebook "تواصل مع الإدارة" button. Point its fetch calls at the new /api/appeal endpoint from step 4.
+
+8. Wire it into both dashboards
+
+driver-dashboard.tsx: remove the now-redundant local pending/rejected-only checks for suspended/banned (there are none today, so nothing to remove there, just confirm no conflict with the existing isRejected/isPending overlay logic at lines 342-357 — the global gate should render on top of/above those, so add a short-circuit: if AccountStatusGate is showing an overlay, the page-level isPending/isRejected overlays should simply not also render — easiest fix is z-index ordering, since the global gate is z-[200] same as the page overlays, so make the global gate z-[210]).
+dashboard.tsx (consumer): no local account-status logic needs to be added there at all — the global gate now covers it for free.
+
+9. Verify the full loop
+Confirm end-to-end: admin bans a consumer → emitToUser fires → consumer's AccountStatusGate (if app is open) freezes the UI within a second; if app was closed, next login/poll picks it up within ~10s. Consumer taps "تقديم طعن", it POSTs to /api/appeal. Confirm this appeal is visible somewhere admin-side (check whether rejected-drivers.tsx's existing appeal-review query needs a sibling page/filter for reason: "banned" and for user_type = 'مستهلك' — if the admin project needs that too, tell me explicitly at the end of your response instead of silently expanding scope into the admin repo, since that's a separate project/prompt).

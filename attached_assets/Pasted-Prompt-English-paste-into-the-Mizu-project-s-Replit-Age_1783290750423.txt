@@ -1,0 +1,28 @@
+Prompt (English) — paste into the Mizu project's Replit Agent:
+
+This is a significant architectural fix: change the frontend from always using the raw Supabase anon key to using each user's real, authenticated Supabase session, so Row-Level Security can finally scope data by identity instead of leaving tables readable by anyone with the public anon key. Work through these steps in order — each one depends on the previous being solid. Confirm/test after each step before moving to the next; don't rush ahead if something looks off.
+Step 1 — Confirm what the backend already returns after login/signup
+Look at artifacts/api-server/src/routes/auth.ts (the signInWithPassword, signUp, verifyOtp, and refreshSession handlers). Confirm whether the response sent to the frontend currently includes both access_token and refresh_token from the Supabase Auth response, or only access_token. Report back which is true — this determines what Step 2 needs.
+Step 2 — Make sure both tokens reach the frontend and get stored
+If refresh_token isn't already included in the API responses for login/signup/OTP-verify/refresh, add it. On the frontend (use-auth.ts), store both sessionToken (access token, as today) and the refresh token (e.g. refreshToken in the same storage). Both are needed for Step 3.
+Step 3 — Call setSession() on the actual Supabase client the app already uses
+Find the single shared Supabase client instance (the one used for driver_locations, orders, announcements, support_messages subscriptions — likely exported from lib/supabase.ts). After every successful login, signup+OTP verification, and app-boot rehydration (when tokens already exist in storage from a previous session), call:
+jsawait supabase.auth.setSession({ access_token, refresh_token });
+This makes that same client — the one every Realtime subscription and direct query already uses — actually carry the user's real identity instead of running as anonymous. Do this in one central place (e.g. inside use-auth.ts's login/signup success handlers and its app-boot initialization effect), not scattered across every page that happens to query Supabase.
+Step 4 — Keep the session in sync during token refresh
+token-refresh.ts / use-token-refresh.ts already rotate the access token in the background via POST /api/auth/refresh. After a successful refresh, also call supabase.auth.setSession() again with the new tokens, so the Supabase client's internal session never goes stale relative to what the backend considers valid.
+Step 5 — Handle logout correctly
+On logout, call supabase.auth.signOut() on the frontend client (in addition to whatever the app already does to clear its own backend session/local storage), so the Supabase client drops back to anonymous cleanly rather than holding a dead session.
+Step 6 — Update Mizu's own Supabase RLS policies to use real identity
+Once Steps 1–5 are confirmed working (test this before touching policies — see Step 7), update RLS on this project's own database for the tables currently scoped to blanket anon access:
+
+orders: restrict SELECT to auth.uid() = user_id OR auth.uid() = driver_id instead of open anon access — a user should only ever see their own orders (as consumer or as assigned driver).
+support_messages: restrict SELECT to auth.uid() = user_id.
+driver_locations: restrict SELECT to auth.uid() = driver_id (for the driver updating their own row) plus a policy allowing a consumer to read a row only when there's a matching order: auth.uid() IN (SELECT user_id FROM orders WHERE orders.driver_id = driver_locations.driver_id AND orders.status = 'قيد التوصيل').
+announcements: keep broader read access if announcements are meant to be visible to all logged-in users, but restrict to TO authenticated instead of TO anon.
+Change all corresponding write policies (INSERT/UPDATE) similarly — e.g. driver_locations upserts should require auth.uid() = driver_id in WITH CHECK.
+
+Step 7 — Test thoroughly before and after Step 6
+Before changing any RLS policy: log in as a driver and a consumer in two separate browsers, confirm Steps 1–5 work (i.e. supabase.auth.getSession() in the browser console returns a real, non-null session for each — not anonymous) with the existing open policies still in place, so you know identity is flowing correctly first. Only after confirming that, apply Step 6's tighter policies, then re-test the full order lifecycle end-to-end (place order → accept → live map tracking → arrival alert → delivery confirmation → rating) to confirm nothing that used to work silently breaks now that policies are identity-scoped.
+Do not touch in this task
+The separate Al-Shaibia Admin project and its own Supabase RLS policies are out of scope here — that project will be updated separately once this Mizu-side change is confirmed stable.

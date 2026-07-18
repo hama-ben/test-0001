@@ -1,0 +1,66 @@
+CRITICAL: Registration is now completely broken with a 404 error.
+
+When trying to register a new driver, the browser shows:
+  HTTP 404: Cannot POST /api/auth/register-request
+
+This means the registration endpoint doesn't exist on whatever 
+backend this app is currently pointing to. This wasn't broken 
+before — something changed recently.
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Check what backend URL the frontend is calling
+═══════════════════════════════════════════════════════════════
+
+Show me:
+1. What base URL is the frontend configured to call for API 
+   requests? (check env vars like VITE_API_URL, or any apiClient 
+   config)
+2. Is it pointing to the Render.com backend (mizu-nyv1.onrender.com) 
+   or to a local Replit server (artifacts/api-server)?
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Check if /api/auth/register-request route exists 
+## wherever it's pointing
+═══════════════════════════════════════════════════════════════
+
+If pointing to Render.com:
+- Is the Render service currently UP and running? Check Render 
+  dashboard status/logs for crashes
+- Does the deployed code actually have this route registered? 
+  Search for "register-request" in the routes file
+
+If pointing to local Replit artifacts/api-server:
+- Does that local server actually have the auth routes implemented? 
+  This is suspicious given your last message mentioned "restoring 
+  full backend routes" was offered but I said NOT to do it yet — 
+  confirm nothing was changed without my approval
+- Run: grep -r "register-request" artifacts/api-server/
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Confirm nothing was changed without approval
+═══════════════════════════════════════════════════════════════
+
+I explicitly said NOT to restore backend routes into 
+artifacts/api-server or make any other changes until we confirmed 
+the announcement target_audience test result. Confirm: did 
+anything change in routing, API base URL, or server configuration 
+in the last session? If so, what exactly, and why did it happen 
+without explicit approval?
+
+═══════════════════════════════════════════════════════════════
+## STEP 4 — Fix and restore working registration
+═══════════════════════════════════════════════════════════════
+
+Based on findings:
+- If frontend is now incorrectly pointing to a broken/incomplete 
+  local server instead of the working Render.com backend → fix 
+  the API base URL back to the correct one
+- If Render.com itself is down/crashed → show me the actual error 
+  logs from Render's dashboard
+- If the route was genuinely removed/renamed in a recent commit → 
+  show me the diff and restore it
+
+═══════════════════════════════════════════════════════════════
+## Do not make further changes until you've shown me the actual 
+## cause from Steps 1-3
+═══════════════════════════════════════════════════════════════

@@ -1,0 +1,25 @@
+Login is failing with a generic "Failed to fetch" error shown directly in the login form, instead of a proper server response. This is a network-level error (the browser's fetch() call itself failed before getting any HTTP response), not a normal "wrong password" error. Please diagnose and fix the root cause — do not just catch the error and show a nicer message, the actual connection must work.
+Please investigate and fix, in this order:
+1. Confirm the backend server is actually running and reachable
+
+Check the Replit console/logs for the backend process (api-server). Confirm it started successfully and is listening on the correct port (process.env.PORT, bound to 0.0.0.0, not localhost).
+If it crashed on startup, show me the full stack trace/error from the logs.
+
+2. Confirm the frontend is pointed at the correct backend URL
+
+Find where the frontend defines its API base URL (likely an environment variable such as VITE_API_URL or similar, used in the fetch()/axios calls in the login page).
+In this monorepo, frontend and backend may be served from different ports/processes. Confirm the frontend's API base URL matches wherever the backend is actually reachable from the browser (not localhost:PORT, since that only works if both are served from the exact same origin — if they're separate services, the frontend needs the backend's actual public Replit URL).
+If the env var is missing or empty in this Replit environment, set it correctly and rebuild.
+
+3. Check for CORS errors in the browser console
+
+Open the browser DevTools → Console/Network tab while reproducing the login attempt, and check if the request is blocked by a CORS policy error (this also surfaces as "Failed to fetch" in many browsers).
+If so, fix the backend's CORS configuration (e.g. cors() middleware in Express) to explicitly allow the frontend's actual origin/domain — do not silently disable CORS security checks in a way that breaks in production.
+
+4. Confirm required environment variables/secrets are present in THIS deployment
+
+Since this project was uploaded as a zip and re-run in a fresh Replit environment, all required secrets (SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, database connection string, VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY, and the frontend's API base URL) must be re-added to Replit's Secrets — they don't carry over automatically from a zip upload.
+List which secrets are currently missing so I can add them.
+
+5. Report back
+After fixing, tell me specifically: (a) what the actual root cause was, (b) whether it was a backend crash, a wrong API URL, a CORS block, or a missing secret, and (c) confirm login now succeeds end-to-end (not just that the error message disappeared).

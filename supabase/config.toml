@@ -1,0 +1,17 @@
+# Supabase project config (used by Supabase CLI for local dev and deployments)
+# Update project_id to match your actual Supabase project reference ID
+# (found in Supabase Dashboard → Project Settings → General → Reference ID)
+
+[api]
+enabled = true
+port = 54321
+
+[db]
+port = 54322
+
+[studio]
+enabled = true
+port = 54323
+
+[functions.notify-support]
+verify_jwt = false

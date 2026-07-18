@@ -1,0 +1,2 @@
+- [React Query duplicate instance in pnpm workspace](react-query-duplicate-instance.md) — workspace lib deps (not peerDeps) get their own local copy; Vite uses a different QueryClientContext → "No QueryClient set".
+- [Account freeze enforcement](account-freeze-enforcement.md) — blockFrozenAccounts middleware, admin PATCH endpoints, shared AppealOverlay, AccountStatusGate in App.tsx.

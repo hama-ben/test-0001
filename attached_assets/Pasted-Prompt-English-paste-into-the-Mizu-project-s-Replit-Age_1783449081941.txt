@@ -1,0 +1,16 @@
+Prompt (English) — paste into the Mizu project's Replit Agent:
+The admin panel can now set a driver's account_status to two new values that didn't exist before: "suspended" and "banned" (in addition to the existing "pending" / "approved" / "rejected"). The Mizu app currently has no handling for these two new values at all — a suspended or banned driver can still log in and use the app normally, which must not happen.
+Please add handling consistent with the existing pattern already used for rejected accounts (RejectedAccountOverlay in src/pages/driver-dashboard.tsx, driven by account.accountStatus === "rejected"):
+
+In the same place GET /driver/:driverId/account already returns accountStatus, no backend change should be needed — "suspended" and "banned" will simply come through as the literal string value already stored in users.account_status. Just confirm this endpoint doesn't filter/whitelist status values anywhere in a way that would block these new strings from passing through as-is.
+In src/pages/driver-dashboard.tsx, add two new full-screen blocking overlays, following the exact visual style of the existing RejectedAccountOverlay (same glass-panel/icon/message layout, just a different icon and message per state), and render them with the same priority as the existing checks:
+
+isSuspended = account?.accountStatus === "suspended" → show a "Suspended Account" overlay: a neutral/gray icon (e.g. PauseCircle or Lock), a message explaining the account has been temporarily suspended and won't receive orders until reactivated, and a "Contact Support" button that opens the existing support chat.
+isBanned = account?.accountStatus === "banned" → show a "Banned Account" overlay: a red/destructive icon (e.g. Ban or ShieldAlert), a message explaining the account has been permanently banned for violating platform rules, and a "Contact Support" button as well.
+Update the existing overlay-priority chain so it reads: isBanned → isSuspended → isRejected → isPending → isExpired/grace-period logic — a banned or suspended account must never fall through to the normal dashboard, the expired-subscription screen, or any grace-period access, regardless of their subscription balance.
+
+
+Apply the exact same 3 checks (banned / suspended / rejected) at the login step itself, not just after landing on the dashboard — if feasible, block/redirect immediately after authentication succeeds but before rendering any dashboard content, so a banned/suspended driver never even briefly sees their own data flash on screen.
+This blocking must apply only to drivers for now (consumers aren't part of this admin feature yet) — but structure the check in a way that's trivial to extend to consumer accounts later if needed, rather than hardcoding it as driver-only logic that would need duplicating.
+
+Do not touch subscriptionExpiresAt or any day-counter logic as part of this — suspension/banning is purely an access-control gate on top of whatever balance the driver already has, and reactivating them later (back to "approved") must restore access with that exact same untouched balance.

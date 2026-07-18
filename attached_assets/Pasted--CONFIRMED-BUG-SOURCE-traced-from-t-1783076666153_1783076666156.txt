@@ -1,0 +1,81 @@
+═══════════════════════════════════════════════════════════════
+CONFIRMED BUG SOURCE — traced from the Al-Shaibia Admin project
+═══════════════════════════════════════════════════════════════
+Direct database evidence: rejecting a payment on the admin panel
+causes subscription_expires_at for the driver to drop from a future
+date (~60+ days out) down to approximately NOW() + 3 days —
+immediately, even though the admin backend's reject endpoint
+provably does NOT touch subscription_expires_at (confirmed by full
+code review on the admin side).
+
+The admin's rejection flow does two things only:
+1. Sets subscription_payments.status = 'rejected'
+2. Inserts a row into "announcements" with target_audience = driver_id
+
+The leading theory, confirmed from the admin side, is that THIS
+project (the driver app) has a Realtime listener — likely in
+use-subscription-notifications.ts — that reacts to a payment
+rejection event (either by listening on subscription_payments
+status changes, or on the announcements insert) and then calls some
+endpoint that writes subscription_expires_at = NOW() + 3 days
+UNCONDITIONALLY, overwriting the driver's real remaining balance.
+
+═══════════════════════════════════════════════════════════════
+STEP 1 — LOCATE THE EXACT MECHANISM, NO ASSUMPTIONS
+═══════════════════════════════════════════════════════════════
+1. Show me the complete current code of
+   artifacts/talabati/src/hooks/use-subscription-notifications.ts
+   — specifically what happens when a "payment_rejected" event (or
+   similar) fires. Does it call any backend endpoint as a reaction,
+   or does it only invalidate a query cache (read-only)?
+
+2. Search the ENTIRE driver-app frontend (artifacts/talabati) for
+   any Realtime subscription (.channel(, postgres_changes) watching
+   subscription_payments or announcements. For each one found, show
+   me exactly what runs in the callback — does it call any endpoint
+   with a POST/PATCH that could write to subscription_expires_at?
+
+3. Search artifacts/api-server/src/routes/driver.ts one more time
+   for ANY endpoint that writes subscription_expires_at = NOW() + 3
+   days (or similar grace-period logic) UNCONDITIONALLY, without a
+   guard checking whether the existing value is already further in
+   the future. We previously fixed the receipt-upload bonus to use
+   a conditional CASE statement — confirm that fix is still intact,
+   AND check if there's a SECOND/different code path (perhaps
+   triggered specifically on rejection, not on upload) that does
+   the same 3-day grant without that same protection.
+
+4. Check if rejecting a payment on the admin side causes the driver
+   app's UI to think "no payment is pending anymore" and
+   automatically/silently re-triggers the upload endpoint or a
+   similar grace-period grant as a side effect of the payment
+   record disappearing from a "pending" list.
+
+Report the exact file, function, and line before applying any fix.
+
+═══════════════════════════════════════════════════════════════
+STEP 2 — FIX (after confirming)
+═══════════════════════════════════════════════════════════════
+Whatever endpoint is found writing the unconditional 3-day grace
+period on rejection must be changed to the same safe pattern already
+proven correct elsewhere in this project:
+
+UPDATE users
+SET subscription_expires_at = CASE
+  WHEN subscription_expires_at IS NULL
+    OR subscription_expires_at < NOW() + INTERVAL '3 days'
+  THEN NOW() + INTERVAL '3 days'
+  ELSE subscription_expires_at
+END
+WHERE id = :driverId;
+
+This must NEVER reduce an existing future subscription_expires_at,
+regardless of what triggered it.
+
+═══════════════════════════════════════════════════════════════
+STEP 3 — TEST
+═══════════════════════════════════════════════════════════════
+Give a driver a future subscription_expires_at (60+ days out via
+direct SQL for testing), then have the admin reject one of their
+pending payments. Confirm subscription_expires_at is UNCHANGED after
+rejection.

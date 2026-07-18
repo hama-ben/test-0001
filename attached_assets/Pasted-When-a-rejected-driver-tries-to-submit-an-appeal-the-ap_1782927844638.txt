@@ -1,0 +1,60 @@
+When a rejected driver tries to submit an appeal, the appeal 
+form shows the error "تعذر الاتصال بالخادم" after clicking 
+"إرسال الطعن".
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Find the appeal submission endpoint
+═══════════════════════════════════════════════════════════════
+
+Search:
+  grep -rn "appeal\|طعن" artifacts/api-server/src/routes/ 
+  grep -rn "POST.*appeal\|appeal.*POST" artifacts/api-server/src/
+
+Show me:
+1. The exact route handling appeal submission (likely POST /driver/appeal)
+2. What URL the frontend calls when submitting the appeal
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Check the actual error
+═══════════════════════════════════════════════════════════════
+
+The "تعذر الاتصال بالخادم" message suggests either:
+a) The endpoint doesn't exist (404) — route not registered
+b) The server crashes when handling the request (500)
+c) Authentication fails (401) — rejected driver's session 
+   may be invalidated
+
+Check: does the rejected driver still have a valid session token 
+when they see the rejection overlay? A rejected driver is blocked 
+from the dashboard, but they still need a valid auth token to 
+submit an appeal.
+
+Show me the appeal route's auth middleware — does it use 
+requireAuth? If so, does requireAuth block rejected drivers 
+entirely, preventing even the appeal submission?
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Fix based on findings
+═══════════════════════════════════════════════════════════════
+
+Most likely fix: the appeal endpoint needs to allow requests 
+from rejected drivers (account_status = 'rejected') — they are 
+authenticated but blocked from the dashboard. The appeal route 
+should check for a valid session but NOT require account_status 
+= 'approved'.
+
+If requireAuth blocks rejected users, either:
+- Create a separate middleware (requireAuthAny) that validates 
+  the session token but doesn't check account_status, OR
+- Add a specific exception in requireAuth for the appeal endpoint
+
+═══════════════════════════════════════════════════════════════
+## STEP 4 — Test after fixing
+═══════════════════════════════════════════════════════════════
+
+✅ Rejected driver sees rejection overlay
+✅ Types appeal message and clicks "إرسال الطعن"
+✅ No "تعذر الاتصال بالخادم" error
+✅ Success message appears: "تم إرسال طعنك، سيتم مراجعته من الإدارة"
+✅ Appeal is saved in driver_appeals table in Supabase
+✅ Driver sees updated message on next login reflecting pending appeal

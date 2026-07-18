@@ -1,0 +1,45 @@
+═══════════════════════════════════════════════════════════════
+CONTEXT
+═══════════════════════════════════════════════════════════════
+When trying to Publish this app, the Publishing panel shows a
+warning: "Could not find run command". This is blocking deployment
+entirely — I cannot publish any of the recent subscription/audit-log
+fixes to production.
+
+═══════════════════════════════════════════════════════════════
+STEP 1 — DIAGNOSE (no changes yet)
+═══════════════════════════════════════════════════════════════
+1. Show me the current [deployment] section of the .replit file
+   (specifically the `run` or `start` command configured there).
+2. Show me the "scripts" section of the relevant package.json
+   (root-level and/or the specific workspace package used for
+   production, e.g. api-server or whichever serves this app).
+3. Confirm: is this a monorepo with multiple workspaces/artifacts?
+   If so, which exact workspace/package is supposed to be the
+   production entry point for THIS deployment target, and does
+   the .replit [deployment] run command correctly point to it?
+4. Check whether a recent change (ours or otherwise) removed or
+   renamed a start script, or whether the [deployment] section
+   was never configured with a run command in the first place.
+
+Report back exactly what's missing or misconfigured before
+making any changes.
+
+═══════════════════════════════════════════════════════════════
+STEP 2 — FIX (only after Step 1 diagnosis)
+═══════════════════════════════════════════════════════════════
+Add the correct `run` command to the .replit [deployment] section
+so Publishing can find and execute it. This should point to
+whatever correctly starts the production server for this specific
+app (the same one already confirmed working in dev/preview).
+
+═══════════════════════════════════════════════════════════════
+CONSTRAINTS
+═══════════════════════════════════════════════════════════════
+Do NOT touch Orders, Maps, Drivers routing logic, the support chat/
+Realtime code, the SPA rewrite fix, or the subscription_expires_at
+logic we just finished fixing. This is scoped only to fixing the
+deployment run command so Publishing works again.
+
+After fixing, confirm you're ready for me to click Publish, and
+tell me exactly what the run command now is.

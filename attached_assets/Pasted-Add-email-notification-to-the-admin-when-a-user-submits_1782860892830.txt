@@ -1,0 +1,76 @@
+Add email notification to the admin when a user submits a support 
+message via the "خدمة العملاء" form.
+
+═══════════════════════════════════════════════════════════════
+## WHAT NEEDS TO HAPPEN
+═══════════════════════════════════════════════════════════════
+
+When a user (driver or customer) submits a support message 
+through the "خدمة العملاء" panel, in addition to saving it to 
+the support_messages table as currently happens, the system must 
+ALSO send an email notification to the admin's Gmail inbox so 
+the admin is immediately aware of new messages without having to 
+check the admin panel constantly.
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Check existing mailer setup
+═══════════════════════════════════════════════════════════════
+
+Check if there's already a mailer/SMTP setup in this codebase:
+  find . -name "mailer*" -o -name "mail*" -o -name "smtp*" 2>/dev/null
+  grep -rn "nodemailer\|smtp\|sendMail\|SMTP_" . --include="*.ts" 
+
+Show me what exists. If a mailer is already configured (from 
+earlier work today), we can reuse it directly.
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Add env variables needed
+═══════════════════════════════════════════════════════════════
+
+We need these environment variables (add to Replit Secrets if 
+not already present):
+  SMTP_HOST = smtp.gmail.com
+  SMTP_PORT = 587
+  SMTP_USER = [admin's Gmail address]
+  SMTP_PASS = [Gmail App Password — NOT the regular password]
+  ADMIN_EMAIL = [admin's Gmail address to receive notifications]
+
+Show me which of these already exist as secrets in this project.
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Send email when support message is submitted
+═══════════════════════════════════════════════════════════════
+
+In the support message submission route (POST /support or similar), 
+after successfully saving to support_messages table, send an email:
+
+To: ADMIN_EMAIL
+Subject: "رسالة جديدة من خدمة العملاء - [user name]"
+Body (Arabic HTML email):
+  - User name and type (سائق/مستهلك)
+  - User email/phone
+  - The message content
+  - Date/time
+  - A note: "يمكنك الرد من لوحة الأدمن"
+
+Use soft-fail: if the email sending fails for any reason, 
+the support message is still saved and the user sees success — 
+do NOT block the user's submission because of an email failure.
+
+═══════════════════════════════════════════════════════════════
+## STEP 4 — Gmail App Password setup instructions
+═══════════════════════════════════════════════════════════════
+
+Since Gmail requires an App Password (not the regular password) 
+for SMTP access, walk me through exactly what I need to do in 
+Gmail settings to generate one — I will do this manually and 
+then add the password to Replit Secrets myself.
+
+═══════════════════════════════════════════════════════════════
+## Test after implementing:
+═══════════════════════════════════════════════════════════════
+✅ User submits support message → saved to support_messages ✅
+✅ Admin receives email notification in Gmail inbox immediately
+✅ Email contains user name, type, message content, and timestamp
+✅ If email fails to send, the user's message is still saved 
+   and they see the success confirmation (soft-fail)

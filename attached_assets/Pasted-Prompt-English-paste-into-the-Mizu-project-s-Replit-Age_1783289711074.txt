@@ -1,0 +1,22 @@
+Prompt (English) — paste into the Mizu project's Replit Agent:
+
+The live-location feature for drivers is currently broken: the frontend code at artifacts/talabati/src/lib/supabase.ts:71–80 calls supabase.from('driver_locations').upsert(...) directly, but the driver_locations table doesn't exist in the live Supabase database at all — this write has been silently failing. Please fix this end-to-end so the consumer can actually see the driver's truck moving live on a map during delivery.
+1. Create the missing table
+sqlCREATE TABLE public.driver_locations (
+  driver_id  uuid PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+  latitude   double precision NOT NULL,
+  longitude  double precision NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+driver_id as the primary key makes the existing .upsert() call work as "always overwrite this driver's one current position" — confirm the existing upsert code's conflict target matches (onConflict: 'driver_id' or equivalent).
+2. Only broadcast location while it's actually needed
+Update the location-sending logic so the driver's app only calls this upsert while they have an order in "قيد التوصيل" status assigned to them (i.e. actively delivering) — not continuously whenever the app is open. This reduces unnecessary writes and limits how long a driver's live position is exposed, which matters given a known architectural constraint (see security note below).
+3. Show the live position on the consumer's side
+On the consumer's order-tracking screen, once a driver has accepted their order:
+
+Add a simple embedded map (reuse whatever map approach is lightest to integrate — a static/interactive map component is fine, e.g. Leaflet with OpenStreetMap tiles, or Google Maps JS API if already configured elsewhere in this project) showing a marker at the driver's current position.
+Subscribe to driver_locations for that specific driver_id (via Supabase Realtime postgres_changes on UPDATE, filtered to driver_id=eq.<the assigned driver's id>) so the marker moves live without polling/refreshing.
+Stop the subscription once the order reaches "تم التوصيل".
+
+⚠️ Known security limitation — implement anyway, but flag this clearly in your response
+Because this frontend operates as the Supabase anon role for all direct calls (it never calls setSession() with the user's real JWT — confirmed in our earlier audit), Row-Level Security cannot filter driver_locations rows by identity (e.g. "only show this row to the consumer who owns the matching order") the normal way. In practice, once RLS is enabled on this new table with a policy that lets the anon role read it at all, any holder of the public anon key could technically query every driver's live location, not just the one they're a customer of — this is the same class of limitation already flagged for orders and support_messages in the RLS audit. Implement the feature as described above regardless (it matches how the rest of this app already works), but explicitly confirm back to me that you understand and are not silently "fixing" this broader identity-scoping gap as part of this task — that's a separate, larger authentication-architecture change (making the frontend use real Supabase Auth sessions instead of the raw anon key) that we'll tackle deliberately later, not bundled into this feature.

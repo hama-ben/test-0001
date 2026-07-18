@@ -1,0 +1,54 @@
+═══════════════════════════════════════════════════════════════
+BREAKTHROUGH — the bug is NOT specific to reject. subscription_expires_at
+is being reset to NOW()+3days REPEATEDLY, roughly every 20-70 seconds,
+regardless of admin action.
+═══════════════════════════════════════════════════════════════
+Evidence from today's approval test logs (driver e7f29f58):
+  Approval 1 (12:00:24): PRE-UPDATE base = Jul 6 (NOW+3d) → wrote Aug 5
+  Approval 2 (12:00:49), 25s later: PRE-UPDATE base = Jul 6 AGAIN
+    (should have been Aug 5, from approval 1!) → wrote Aug 5 again
+  Approval 3 (12:01:35), 46s later: PRE-UPDATE base = Jul 6 AGAIN
+  Approval 4 (12:03:18), 103s later: PRE-UPDATE base = Jul 6 AGAIN
+
+Between EVERY approval, something resets subscription_expires_at
+back down to approximately NOW()+3days within the gap (20-100
+seconds). This is a continuous/periodic write, not a one-time event
+tied to reject. This single mechanism explains BOTH the "reject
+wipes days" symptom AND the earlier "approvals don't stack" symptom
+— any check just happens to catch it mid-reset-cycle.
+
+═══════════════════════════════════════════════════════════════
+PRIME SUSPECT: the driver app's polling
+═══════════════════════════════════════════════════════════════
+The driver app's subscription page has refetchInterval: 5000 on its
+account query (added earlier to fix stale-cache display). This
+SHOULD be read-only (GET). But please verify:
+
+1. Search the driver app (nano-main/artifacts/talabati) for ANY
+   code that calls PATCH /driver/:driverId/account — even if a
+   previous search said "no call site exists", re-search now,
+   specifically for any mutation, sync function, or "keep session
+   alive" / "sync local state to server" pattern that could fire on
+   an interval or after every account refetch.
+
+2. Check use-token-refresh.ts and any other periodic/interval-based
+   hook in the driver app — does ANY of them, as a side effect,
+   PATCH or POST any endpoint with a driver's cached
+   subscriptionExpiresAt value (possibly stale, e.g., captured once
+   at login/mount and never updated, always close to the original
+   "NOW+3days" grace value from early in the session)?
+
+3. Check the API server (both projects) for ANY setInterval, cron,
+   or scheduled job that runs frequently (every 20-100 seconds) and
+   touches subscription_expires_at for active/testing drivers —
+   re-check this even though a prior search found none, since the
+   evidence is now much stronger that SOMETHING periodic exists.
+
+4. Check whether the receipt-upload endpoint's "grace period" bonus
+   could somehow be re-triggered automatically/silently on an
+   interval (e.g., a background sync, service worker, or duplicate
+   mount of a component that re-runs a mutation on each render).
+
+Report the exact periodic mechanism and its source file/line before
+applying any fix. This is now confirmed to be a recurring background
+write, not a single-event bug.

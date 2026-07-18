@@ -1,0 +1,90 @@
+There are THREE bugs with subscription_expires_at logic:
+
+═══════════════════════════════════════════════════════════════
+## BUG 1 — Payment approval doesn't STACK on existing subscription
+═══════════════════════════════════════════════════════════════
+
+When admin approves a payment receipt, the driver should get 
++30 days ADDED ON TOP of their current subscription_expires_at 
+(not from NOW()).
+
+Current behavior: 
+  Driver has 32 days remaining → admin approves payment → 
+  result shows only 30 days (from NOW()) instead of 62 days 
+  (32 existing + 30 new)
+
+Required behavior:
+  new_expiry = MAX(subscription_expires_at, NOW()) + 30 days
+  
+  This means: take whichever is later (current expiry OR now), 
+  then ADD 30 days on top of it — always stacking, never resetting.
+
+Fix the payment approval atomic SQL to:
+  UPDATE users
+  SET subscription_expires_at = 
+    GREATEST(subscription_expires_at, NOW()) + INTERVAL '30 days'
+  WHERE id = :driverId
+  RETURNING subscription_expires_at;
+
+═══════════════════════════════════════════════════════════════
+## BUG 2 — First approval gift should be 32 days, not 30
+═══════════════════════════════════════════════════════════════
+
+When admin approves a driver's documents for the FIRST TIME 
+(first_approval_granted = false), the gift should be 32 days 
+(30 base + 2 bonus days as thank-you), NOT just 30 days.
+
+Check the approve handler in admin.ts — confirm daysToAdd is 
+set to 32 for first-time approvals, not 30.
+
+If it's currently 30, change it to 32 for first_approval_granted 
+= false case only. Re-approvals stay at whatever the existing 
+logic gives (no bonus).
+
+═══════════════════════════════════════════════════════════════
+## BUG 3 — Rejection REMOVES existing subscription days
+═══════════════════════════════════════════════════════════════
+
+When admin rejects a driver, the rejection handler should NOT 
+touch subscription_expires_at at all. Currently it appears to 
+be overwriting/reducing it to only 4 days remaining.
+
+Required behavior on rejection:
+- Only change: account_status = 'rejected'
+- Do NOT modify subscription_expires_at in any way
+- The driver keeps whatever days they had before rejection
+
+Find the rejection handler in admin.ts and confirm it does NOT 
+include any update to subscription_expires_at. If it does, 
+remove that update entirely.
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Show me current code for all 3 handlers before fixing
+═══════════════════════════════════════════════════════════════
+
+Show me the exact current code for:
+1. Payment approval subscription update (the atomic SQL we just 
+   added — check if it uses GREATEST or MAX)
+2. Document approval first-time gift (what is daysToAdd set to?)
+3. Rejection handler (does it touch subscription_expires_at?)
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Fix all 3 based on findings
+═══════════════════════════════════════════════════════════════
+
+Apply fixes, show me the diff for each one.
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Test sequence after fixing
+═══════════════════════════════════════════════════════════════
+
+Test this exact sequence with a new driver:
+1. Register → upload docs → confirm 3-day trial granted ✅
+2. Admin approves docs (first time) → confirm 32 days total ✅
+3. Admin approves payment receipt → confirm days STACK 
+   (e.g. 32 + 30 = 62 days from expiry date, not from NOW()) ✅
+4. Admin rejects the same driver → confirm subscription_expires_at 
+   is UNCHANGED (still shows ~62 days) ✅
+
+Show me server logs [SUBSCRIPTION WRITE] for each step confirming 
+the before/after values.

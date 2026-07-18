@@ -1,0 +1,37 @@
+I need you to make targeted performance fixes to my Node.js/Express + Supabase 
+backend WITHOUT touching the database schema, without changing any API routes/
+endpoints signatures, and without modifying any frontend/UI code. Only backend 
+performance and reliability fixes, scoped exactly as follows:
+
+1. DATABASE CONNECTION POOL:
+   In lib/db/src/index.ts, the pg `Pool` is created without a `max` value, so it 
+   defaults to 10 connections. Update it to explicitly set a reasonable pool size 
+   (e.g. `max: 20`), plus sensible `idleTimeoutMillis` and `connectionTimeoutMillis` 
+   values. Do not change the connection string, SSL config, or how the pool is 
+   exported/imported elsewhere — only add the pool sizing options.
+
+2. AUTH VERIFICATION PER REQUEST:
+   In the `requireAuth` middleware, every authenticated request currently calls 
+   `supabase.auth.getUser(token)`, which is a network round-trip to Supabase's 
+   Auth servers on every single protected request. Replace this with local, 
+   cryptographic JWT verification (using the Supabase JWT secret / public key, 
+   e.g. via the `jsonwebtoken` library) so the token is validated in-process 
+   without an external network call. Keep the exact same behavior/contract for 
+   downstream code: same fields attached to `req` (user id, user type, etc.), 
+   same error responses (401/403) and same status codes on invalid/expired 
+   tokens, so no route or frontend code needs to change.
+
+3. DO NOT TOUCH:
+   - Any database tables, columns, or migrations
+   - Any existing API route paths, request/response shapes, or Zod schemas
+   - Any frontend/mobile/UI code
+   - Socket.io logic (leave as-is for now, out of scope)
+   - Business logic in routes (orders, ratings, driver, etc.)
+
+4. AFTER THE CHANGES:
+   Show me a clear diff/summary of exactly what changed in each file, and confirm 
+   that existing behavior (response shape, status codes, auth contract) is 
+   unchanged — only internal performance/implementation details should differ.
+
+Keep the changes minimal, safe, and reversible. If something is ambiguous or 
+risky, ask me before changing it instead of guessing.

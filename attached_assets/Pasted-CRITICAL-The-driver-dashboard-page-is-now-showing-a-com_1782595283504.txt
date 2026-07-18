@@ -1,0 +1,76 @@
+CRITICAL: The driver-dashboard page is now showing a completely 
+BLANK WHITE SCREEN — no content, no error message visible to the 
+user, nothing renders at all.
+
+This started right after the last change (auto-opening the support 
+chat panel based on unread admin replies). This is very likely a 
+JavaScript crash happening during the dashboard's initial render — 
+probably in the new code that checks for unread messages.
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Check the browser console RIGHT NOW
+═══════════════════════════════════════════════════════════════
+
+Open the actual driver-dashboard URL and check DevTools Console. 
+Show me the EXACT error message and full stack trace. A blank 
+white screen with no fallback UI strongly suggests an unhandled 
+JavaScript exception during render — React would normally show 
+nothing if there's no error boundary catching it.
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Likely causes to check
+═══════════════════════════════════════════════════════════════
+
+Check these specifically, since they relate to the last change:
+
+1. Is the new "check for unread admin reply on mount" code 
+   crashing because of a null/undefined value? (e.g. trying to 
+   read `.length` or `.id` on a response that came back null 
+   when there's no conversation yet for a new user)
+
+2. Is there an infinite re-render loop? (e.g. a useEffect with a 
+   missing or incorrect dependency array that keeps triggering 
+   the unread-check fetch repeatedly, eventually crashing the page 
+   or freezing it into a blank state)
+
+3. Is the Supabase realtime subscription for `support_messages` 
+   throwing an error if `support_messages` returns no rows for a 
+   user who has never contacted support? (e.g. trying to access 
+   `data[0].sender_type` when `data` is an empty array)
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Add an Error Boundary immediately
+═══════════════════════════════════════════════════════════════
+
+Regardless of the root cause, wrap the driver-dashboard (and 
+customer dashboard) in a proper React Error Boundary so that ANY 
+future crash shows a visible fallback message instead of a 
+silent blank white screen. This is a safety net, not a replacement 
+for fixing the actual bug.
+
+═══════════════════════════════════════════════════════════════
+## STEP 4 — Fix the actual root cause
+═══════════════════════════════════════════════════════════════
+
+Based on Step 1's actual console error, fix the real bug — likely 
+adding a null-check/guard clause around the new unread-message 
+logic so it handles "no messages yet" and "no conversation yet" 
+gracefully instead of crashing.
+
+═══════════════════════════════════════════════════════════════
+## STEP 5 — Test thoroughly after fixing
+═══════════════════════════════════════════════════════════════
+
+✅ A driver who has NEVER contacted support → dashboard loads 
+   normally, no crash, no auto-open (nothing to show)
+✅ A driver WITH an unread admin reply → dashboard loads, panel 
+   auto-opens correctly (the feature we built)
+✅ A driver with a fully-read conversation history → dashboard 
+   loads normally, no auto-open
+✅ Show me the actual console output confirming no errors after 
+   the fix, on all three scenarios above
+
+═══════════════════════════════════════════════════════════════
+## Do not report fixed without showing the actual error from 
+## Step 1 and confirming it's resolved
+═══════════════════════════════════════════════════════════════

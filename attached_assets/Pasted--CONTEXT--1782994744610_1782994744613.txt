@@ -1,0 +1,60 @@
+═══════════════════════════════════════════════════════════════
+CONTEXT
+═══════════════════════════════════════════════════════════════
+Bug 2 fix (32-day first-approval gift) is confirmed applied and correct.
+Bug 1 (payment approval stacking) and Bug 3 (rejection not touching
+subscription) were both already correct — no changes needed there.
+
+One gap remains: the first-approval handler (doc approval, step 2)
+does NOT use the same atomic SQL pattern or audit logging as the
+payment approval handler. It uses a plain JS `new Date()` write.
+This is a risk because it means any future race condition on THIS
+specific write path would be invisible (no [SUBSCRIPTION WRITE] log)
+and potentially unprotected against concurrent writes.
+
+═══════════════════════════════════════════════════════════════
+STEP 1 — DIAGNOSE (no changes yet)
+═══════════════════════════════════════════════════════════════
+1. Show me the exact current code for the first-approval doc handler
+   (the one that sets giftExpiry using new Date()).
+2. Confirm: does this write use a plain SELECT-then-UPDATE pattern,
+   or does it write directly with no prior read at all? (If it never
+   reads the current value first, it may be safe from the stacking
+   race even without atomic SQL — confirm which case this is.)
+
+═══════════════════════════════════════════════════════════════
+STEP 2 — FIX (only if Step 1 shows a real risk)
+═══════════════════════════════════════════════════════════════
+If the first-approval write does read-then-write:
+  - Convert it to the same atomic SQL pattern used in payment approval.
+
+Regardless of the above, add the same [SUBSCRIPTION WRITE PRE]/[SUBSCRIPTION WRITE POST]
+audit logging used in the payment approval handler to this handler too,
+so every write to subscription_expires_at across the whole codebase
+produces a consistent, comparable log entry (driverId, endpoint name,
+old value, new value, UTC ISO timestamp).
+
+═══════════════════════════════════════════════════════════════
+STEP 3 — FULL REGRESSION TEST (after Step 2, on a NEW test driver)
+═══════════════════════════════════════════════════════════════
+1. Register new test driver → upload docs → confirm 3-day trial granted
+2. Admin approves docs (first time) → confirm exactly 32 days total,
+   confirm [SUBSCRIPTION WRITE] log now appears for this step
+3. Admin approves a payment receipt → confirm days STACK on top
+   (32 + 30 = 62 days, not reset to 30)
+4. Admin rejects a second payment for the same driver → confirm
+   subscription_expires_at is COMPLETELY UNCHANGED (still ~62 days)
+5. Approve two payments in rapid succession (within 5 seconds of each
+   other) for the same driver → confirm BOTH stack correctly
+   (no lost update), and confirm the idempotency guard (409) fires
+   correctly if the same payment ID is approved twice
+
+Show me the full [SUBSCRIPTION WRITE] log output for steps 1–5,
+with before/after values for each write.
+
+═══════════════════════════════════════════════════════════════
+CONSTRAINTS
+═══════════════════════════════════════════════════════════════
+Do not touch Orders, Maps, Drivers routing logic, the support chat/
+Realtime code, or the SPA rewrite fix. Scoped only to subscription_expires_at
+write paths across admin.ts and driver.ts.

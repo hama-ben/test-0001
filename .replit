@@ -1,0 +1,30 @@
+modules = ["nodejs-20", "web", "java-graalvm22.3", "postgresql-16"]
+
+[deployment]
+router = "application"
+deploymentTarget = "autoscale"
+
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
+
+[workflows]
+runButton = "Project"
+
+[agent]
+stack = "PNPM_WORKSPACE"
+expertMode = true
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
+
+[userenv]
+
+[userenv.shared]
+SUPABASE_URL = "https://aeoyteruvcxqimwusrey.supabase.co"
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFlb3l0ZXJ1dmN4cWltd3VzcmV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0MjM3ODUsImV4cCI6MjA5NTk5OTc4NX0.vi9Chq9WgzSKEKz50EHJyaKnPtBRi1MvIjdtlePJHH8"
+ADMIN_EMAIL = "waterdrive213@gmail.com"
+
+[nix]
+channel = "stable-25_05"

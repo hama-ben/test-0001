@@ -1,0 +1,19 @@
+There are two related bugs in the subscription payment approval/rejection flow (driver subscription system — Payments tab in admin panel, and the driver dashboard's subscription countdown).
+
+BUG 1 — Rejecting a payment receipt deletes existing subscription days:
+When the admin REJECTS a payment receipt, the driver's existing remaining subscription days (e.g., 30 days they already had active) get wiped out / reset, instead of being left completely untouched. A rejected payment should have ZERO effect on the driver's current subscription balance — reject should only update the payment record's status, nothing else.
+
+BUG 2 — Approving a payment does not accumulate/stack days on top of the existing balance:
+When the admin APPROVES a payment receipt (e.g., a 30-day subscription + 3 bonus days = 33 days), if the driver already had remaining days (e.g., 32 days left from a previous active subscription), the new approval should ADD to the existing balance (32 + 33 = 65 days), but instead it appears to overwrite/replace the balance, resulting in a much lower number than expected (e.g., staying near 32 instead of becoming 65).
+
+Please do a DIAGNOSIS FIRST before changing anything:
+1. Find the exact backend/database logic that runs when a payment receipt is approved or rejected (likely in the API server, search for something like `subscription_payments`, `approve`, `reject`, driver `subscription_end_date` or similar field).
+2. Show me the current logic for both the approve and reject code paths — specifically how the subscription end date / remaining days field is calculated and written.
+3. Identify exactly where the bug is: is reject accidentally resetting a date field it shouldn't touch? Is approve using `now() + duration` instead of `current_subscription_end_date + duration` (or similar overwrite-instead-of-extend logic)?
+4. Report back your findings before applying any fix.
+
+After I confirm the diagnosis, the fix should be:
+- REJECT: must not modify the driver's subscription/remaining-days field at all — only update the payment receipt's own status (e.g., to "rejected").
+- APPROVE: must ADD the new subscription duration (base days + bonus days) on top of the driver's CURRENT remaining balance if they still have active days left, or on top of today's date if their subscription had already expired (whichever is the correct existing business rule — confirm this with me if ambiguous).
+
+Do NOT touch Orders, Maps, Drivers routing logic, the support chat / Realtime code, or the SPA rewrite fix. This is scoped only to the subscription payment approve/reject logic.

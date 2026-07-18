@@ -1,0 +1,62 @@
+Yes, I approve. Please proceed with copying all 10 backend route 
+files (and their dependencies/middlewares/lib helpers) from 
+.migration-backup/artifacts/api-server/src/ into the active 
+artifacts/api-server/src/.
+
+═══════════════════════════════════════════════════════════════
+## After copying, before pushing:
+═══════════════════════════════════════════════════════════════
+
+1. Verify the build succeeds cleanly (npm run build or equivalent) 
+   with zero errors
+2. Show me the build output confirming success
+
+═══════════════════════════════════════════════════════════════
+## IMPORTANT — apply the privacy fix to the RESTORED code immediately
+═══════════════════════════════════════════════════════════════
+
+This restored backend is the OLD pre-Replit codebase, which we 
+already confirmed contains the privacy bug: admin approve/reject/
+payment handlers write `target_audience: 'Drivers'` (broadcast) 
+instead of `target_audience: targetUserId` (the specific driver's 
+UUID) for personal notifications.
+
+Before pushing this restored code, find and fix these EXACT 4 
+handlers within the newly-restored `admin.ts`:
+  1. Driver document approval
+  2. Driver document rejection
+  3. Payment approval  
+  4. Payment rejection
+
+Change each one from:
+  target_audience: 'Drivers'
+to:
+  target_audience: targetUserId  // the specific driver's actual UUID
+
+Show me the exact diff/before-after for each of these 4 handlers 
+so I can confirm the fix is correctly applied before you push.
+
+═══════════════════════════════════════════════════════════════
+## Then push and confirm deployment
+═══════════════════════════════════════════════════════════════
+
+1. Commit and push to origin/main
+2. Confirm Render picks up the new commit and redeploys 
+   successfully (check Render's Events/Deploy tab)
+3. Test:
+   GET https://mizu-nyv1.onrender.com/api/healthz → should be 200
+   POST https://mizu-nyv1.onrender.com/api/auth/register-request 
+   → should NOT be 404 anymore
+
+═══════════════════════════════════════════════════════════════
+## Final verification test
+═══════════════════════════════════════════════════════════════
+
+1. Register a new test driver → confirm registration works again
+2. Approve that driver from admin panel
+3. Run in Supabase:
+     SELECT id, title, target_audience, created_at 
+     FROM announcements ORDER BY created_at DESC LIMIT 1;
+4. Confirm target_audience shows a UUID, NOT "Drivers"
+
+Show me real results for all of the above before declaring this done.

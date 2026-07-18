@@ -1,0 +1,61 @@
+The target_audience bug is STILL ACTIVE right now. I just tested 
+by registering a new driver and approving them — this happened 
+TODAY (2026-06-30 18:17:01), AFTER all our earlier fixes — and 
+the announcement row STILL shows target_audience = "Drivers", 
+not a UUID.
+
+  SELECT id, title, target_audience, created_at 
+  FROM announcements ORDER BY created_at DESC LIMIT 3;
+
+Result:
+  "تم قبولك بيننا 🎉"   target_audience = "Drivers"   2026-06-30 18:17:01
+  "تم قبول دفع وصلك ✅"  target_audience = "Drivers"   2026-06-29 17:24:37
+  "تم قبول دفع وصلك ✅"  target_audience = "Drivers"   2026-06-29 15:51:00
+
+This confirms the fix we believed was applied earlier is NOT 
+actually running in whatever code currently handles driver 
+approval and payment approval.
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Find the EXACT current code handling these 2 actions
+═══════════════════════════════════════════════════════════════
+
+Search and show me the ENTIRE current code for:
+1. Driver approval handler (whatever runs when admin clicks 
+   "قبول" in Driver Queue) — search:
+     grep -rn "تم قبولك بيننا" .
+2. Payment approval handler (whatever runs when admin clicks 
+   "تأكيد" in Payments) — search:
+     grep -rn "تم قبول دفع وصلك" .
+
+Show me the FULL file path(s) found and the exact insert code 
+around each match — specifically what value is passed for 
+target_audience in each.
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Confirm this is the ADMIN PANEL'S code, not Mizu's
+═══════════════════════════════════════════════════════════════
+
+These specific actions (driver approval, payment approval) are 
+triggered from the ADMIN PANEL, not from this Mizu workspace. 
+If you don't find these strings anywhere in this Mizu codebase, 
+that confirms the bug lives in the SEPARATE admin panel Replit 
+project — tell me clearly if that's the case, since I'll need to 
+send a matching prompt there instead.
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — If found here in Mizu, fix it now
+═══════════════════════════════════════════════════════════════
+
+If the strings ARE found in this Mizu codebase, fix each insert 
+to use the specific driver's UUID instead of the broadcast string 
+'Drivers':
+
+  target_audience: driverId  // NOT 'Drivers'
+
+Show me the diff before committing.
+
+═══════════════════════════════════════════════════════════════
+## Do not claim this is fixed without showing me the exact grep 
+## results first
+═══════════════════════════════════════════════════════════════
