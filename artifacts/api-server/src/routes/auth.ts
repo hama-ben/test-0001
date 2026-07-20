@@ -314,7 +314,16 @@ router.post("/auth/login", async (req, res): Promise<void> => {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (error || !data.user || !data.session) {
-    req.log.warn({ email, err: error?.message }, "login: Supabase signIn failed");
+    req.log.warn({ email, err: error?.message, status: error?.status }, "login: Supabase signIn failed");
+
+    if (error?.status === 429) {
+      res.status(429).json({ error: "عدد محاولات تسجيل الدخول كبير جدًا — حاول بعد قليل" });
+      return;
+    }
+    if (error?.status && error.status >= 500) {
+      res.status(503).json({ error: "خدمة المصادقة غير متاحة مؤقتًا — حاول بعد قليل" });
+      return;
+    }
     res.status(401).json({ error: "بيانات تسجيل الدخول غير صحيحة" });
     return;
   }
