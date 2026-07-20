@@ -1,0 +1,83 @@
+/**
+ * Logs in every seeded test account ONE AT A TIME with pacing + backoff,
+ * to stay under Supabase Auth's per-IP rate limit (token bucket, ~30 burst
+ * capacity — this is exactly what caused the 429 storm in the k6 test).
+ *
+ * Run this ONCE before the region-broadcast test. It caches session tokens
+ * to authenticated-accounts.json so the actual test never has to log in
+ * again (tokens are valid ~1 hour by default — if your test runs longer,
+ * re-run this first).
+ *
+ * Usage:
+ *   node pace-login.mjs
+ *
+ * Env: BASE_URL (your staging API server, e.g. https://xxxx.onrender.com)
+ */
+import { readFileSync, writeFileSync } from "fs";
+
+const BASE_URL = process.env.BASE_URL;
+if (!BASE_URL) {
+  console.error("Missing BASE_URL env var.");
+  process.exit(1);
+}
+
+const { drivers, consumers } = JSON.parse(readFileSync("./load-test-accounts.json", "utf8"));
+const allAccounts = [...drivers.map(d => ({ ...d, kind: "driver" })), ...consumers.map(c => ({ ...c, kind: "consumer" }))];
+
+const PACE_MS = 300; // gap between logins — conservative, well under the bucket refill rate
+const MAX_RETRIES = 5;
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function loginOne(account, attempt = 1) {
+  const res = await fetch(`${BASE_URL}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-device-id": `paced-${account.id}` },
+    body: JSON.stringify({ email: account.email, password: account.password }),
+  });
+
+  if (res.status === 429) {
+    if (attempt > MAX_RETRIES) throw new Error(`${account.email}: still 429 after ${MAX_RETRIES} retries`);
+    const backoff = 2000 * attempt; // widening backoff: 2s, 4s, 6s...
+    console.log(`  ⏳ 429 for ${account.email}, waiting ${backoff}ms (attempt ${attempt})`);
+    await sleep(backoff);
+    return loginOne(account, attempt + 1);
+  }
+
+  if (res.status !== 200) {
+    throw new Error(`${account.email}: login failed with status ${res.status}`);
+  }
+
+  const data = await res.json();
+  return { ...account, sessionToken: data.sessionToken, userId: data.userId };
+}
+
+async function main() {
+  const authenticated = [];
+  let failures = 0;
+
+  for (let i = 0; i < allAccounts.length; i++) {
+    const account = allAccounts[i];
+    try {
+      const result = await loginOne(account);
+      authenticated.push(result);
+    } catch (err) {
+      failures++;
+      console.error(`  ❌ ${account.email}: ${err.message}`);
+    }
+    if ((i + 1) % 50 === 0) console.log(`  ${i + 1}/${allAccounts.length} logged in so far...`);
+    await sleep(PACE_MS);
+  }
+
+  writeFileSync("authenticated-accounts.json", JSON.stringify({
+    drivers: authenticated.filter(a => a.kind === "driver"),
+    consumers: authenticated.filter(a => a.kind === "consumer"),
+  }, null, 2));
+
+  console.log(`\nDone: ${authenticated.length} logged in, ${failures} failed → authenticated-accounts.json`);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
