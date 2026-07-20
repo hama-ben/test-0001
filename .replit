@@ -20,6 +20,10 @@ author = "agent"
 task = "workflow.run"
 args = "ramp-load-test"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "pace-login-run"
+
 [[workflows.workflow]]
 name = "ramp-load-test"
 author = "agent"
@@ -27,6 +31,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "cd mizu-load-test && BASE_URL=https://test-0001.onrender.com SUPABASE_URL=https://bjncmpvdjvylyacpymdp.supabase.co SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJqbmNtcHZkanZ5bHlhY3B5bWRwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzOTQ2NTcsImV4cCI6MjA5OTk3MDY1N30.5tUFLcmFQCZ4bhANwPTzb6vrxr2dipJw8uQhcaQjKfE ADMIN_API_KEY=mZk9Tq2Xr7Ln4WpVb8Hs5Cy3Fj6Rd1Ge node ramp-to-breaking-point.mjs"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "pace-login-run"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd mizu-load-test && BASE_URL=https://test-0001.onrender.com node pace-login.mjs"
 
 [workflows.workflow.metadata]
 outputType = "console"
