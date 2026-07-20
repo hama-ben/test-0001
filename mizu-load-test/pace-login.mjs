@@ -24,7 +24,7 @@ if (!BASE_URL) {
 const { drivers, consumers } = JSON.parse(readFileSync("./load-test-accounts.json", "utf8"));
 const allAccounts = [...drivers.map(d => ({ ...d, kind: "driver" })), ...consumers.map(c => ({ ...c, kind: "consumer" }))];
 
-const PACE_MS = 300; // gap between logins — conservative, well under the bucket refill rate
+const PACE_MS = 600; // gap between logins — conservative, well under the bucket refill rate
 const MAX_RETRIES = 5;
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
