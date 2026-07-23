@@ -9,8 +9,11 @@
  *     reviewer would use — scripted, not manual. A rejected driver never
  *     goes online, same as real life. Approved drivers connect to Socket.io
  *     and start sending live location updates every 5s, exactly like the
- *     real app (direct to Supabase with the anon key, matching
- *     talabati/src/lib/supabase.ts:updateDriverLocation).
+ *     real app: a direct REST call to Supabase carrying the driver's OWN
+ *     session token (not the bare anon key), matching what
+ *     supabase.auth.setSession() + upsert() produces over the wire in
+ *     talabati/src/lib/supabase.ts:updateDriverLocation — required for
+ *     Supabase's RLS (driver_id = auth.uid()) to accept the write.
  *   - Consumers create orders continuously; order-worker count is tied to
  *     driver count via an accelerating random multiplier, so demand grows
  *     FASTER than driver supply as the test progresses.
@@ -23,10 +26,12 @@
  *   4. location  — driver_locations upserts direct to Supabase (the "map" layer)
  *   5. orders    — order creation
  *
- * Prerequisite: authenticated-accounts.json from pace-login.mjs
+ * Prerequisite: authenticated-accounts.json from pace-login.mjs (tokens are
+ * only valid ~1 hour — re-run pace-login.mjs immediately before this if any
+ * time has passed).
  *
  * Usage:
- *   npm install socket.io-client @supabase/supabase-js
+ *   npm install socket.io-client
  *   BASE_URL=https://your-staging-api.onrender.com \
  *   SUPABASE_URL=https://xxxx.supabase.co \
  *   SUPABASE_ANON_KEY=xxxx \
@@ -36,10 +41,7 @@
  * Stop anytime with Ctrl+C — it prints the full breakdown on exit either way.
  */
 import { readFileSync } from "fs";
-import { WebSocket } from "ws";
-globalThis.WebSocket = WebSocket; // Node 20 lacks native WebSocket; required by @supabase/realtime-js
 import { io } from "socket.io-client";
-import { createClient } from "@supabase/supabase-js";
 
 const BASE_URL = process.env.BASE_URL;
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -61,10 +63,12 @@ const LOCATION_UPDATE_INTERVAL_MS = 5000; // matches the real app's cadence
 const ORDER_WORKER_DELAY_MS = 2000; // each consumer worker waits ~2s between its own orders
 const ERROR_RATE_BREAK_THRESHOLD = 0.3; // 30% errors in the rolling window = "broken"
 const ROLLING_WINDOW = 20;
+const ORDER_SUCCESS_TRIGGER = 8; // every N consecutive successful orders, add more worker(s)
 
-const supabaseAnon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { autoRefreshToken: false, persistSession: false },
-});
+// A small dummy file for the document upload step. fileFilter on the server
+// only checks the declared mimetype, not real image bytes, so this is fine
+// for load-testing the upload endpoint itself (multer memoryStorage, the
+// signed-URL flow, Supabase Storage write) without needing a real photo.
 
 const { drivers, consumers } = JSON.parse(readFileSync("./authenticated-accounts.json", "utf8"));
 
@@ -113,6 +117,7 @@ function percentile(arr, p) {
 // ── State ─────────────────────────────────────────────────────────────────
 let driversConnected = 0;
 let orderWorkers = 1;
+let consecutiveOrderSuccesses = 0;
 let stopped = false;
 const sockets = [];
 
@@ -142,7 +147,7 @@ async function uploadSlot(driver, slot) {
     record(categories.uploads, ok, Date.now() - start, currentContext());
     if (!ok) return null;
     const data = await res.json();
-    return data.url; // bare storage path — what gets persisted in driver_details
+    return data.url;
   } catch {
     record(categories.uploads, false, Date.now() - start, currentContext());
     return null;
@@ -168,10 +173,6 @@ async function submitDocs(driver, truckFrontPhotoUrl, driverLicenseUrl) {
 let approvedCount = 0;
 let rejectedCount = 0;
 
-/** Auto-approves (or randomly rejects, for realism) via the same admin
- *  endpoints a human reviewer would use — scripted instead of manual, so
- *  the test doesn't stall waiting on a person to click "approve" 500 times.
- *  Returns true if the driver is approved and should go online. */
 async function autoReviewDriver(driver) {
   const reject = Math.random() < REJECTION_RATE;
   const path = reject ? "reject" : "approve";
@@ -185,7 +186,7 @@ async function autoReviewDriver(driver) {
     record(categories.approval, ok, Date.now() - start, currentContext());
     if (ok && reject) { rejectedCount++; return false; }
     if (ok && !reject) { approvedCount++; return true; }
-    return false; // the approve/reject call itself failed — don't treat as online
+    return false;
   } catch {
     record(categories.approval, false, Date.now() - start, currentContext());
     return false;
@@ -201,10 +202,9 @@ async function onboardDriver(driver) {
   return autoReviewDriver(driver);
 }
 
-// ── Driver ramp: connect 2 at a time, each starts its own location loop ───
 async function connectOneDriver(driver) {
-  const approved = await onboardDriver(driver); // upload docs + auto-review first — matches real registration flow
-  if (!approved) return; // rejected or onboarding failed — this driver never goes online, same as real life
+  const approved = await onboardDriver(driver);
+  if (!approved) return;
 
   const start = Date.now();
   return new Promise((resolve) => {
@@ -233,13 +233,28 @@ function startLocationLoop(driver) {
   const loop = async () => {
     if (stopped) return;
     const start = Date.now();
-    const { error } = await supabaseAnon
-      .from("driver_locations")
-      .upsert(
-        { driver_id: driver.userId, latitude: 36.75 + Math.random() * 0.1, longitude: 3.06 + Math.random() * 0.1, updated_at: new Date().toISOString() },
-        { onConflict: "driver_id" }
-      );
-    record(categories.location, !error, Date.now() - start, currentContext());
+    let ok = false;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/driver_locations`, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${driver.sessionToken}`,
+          "Content-Type": "application/json",
+          Prefer: "resolution=merge-duplicates",
+        },
+        body: JSON.stringify({
+          driver_id: driver.userId,
+          latitude: 36.75 + Math.random() * 0.1,
+          longitude: 3.06 + Math.random() * 0.1,
+          updated_at: new Date().toISOString(),
+        }),
+      });
+      ok = res.status >= 200 && res.status < 300;
+    } catch {
+      ok = false;
+    }
+    record(categories.location, ok, Date.now() - start, currentContext());
     if (!stopped) setTimeout(loop, LOCATION_UPDATE_INTERVAL_MS);
   };
   loop();
@@ -257,14 +272,11 @@ async function rampDrivers() {
   console.log(`\n✅ كل السائقين اتصلوا (${driversConnected}/${drivers.length})\n`);
 }
 
-// ── Order ramp: worker count tied to driver count, growing FASTER than
-// drivers via an accelerating random multiplier — mimics real demand
-// outpacing supply as more drivers come online, not a flat ratio.
 let demandMultiplier = 1.0;
 const DEMAND_GROWTH_MIN = 0.01;
 const DEMAND_GROWTH_MAX = 0.06;
 const DEMAND_MULTIPLIER_CAP = 4.0;
-const ORDER_WORKERS_CAP = 800; // safety cap so the load generator itself doesn't fall over
+const ORDER_WORKERS_CAP = 800;
 
 function bumpDemandAndSpawnWorkers() {
   if (demandMultiplier < DEMAND_MULTIPLIER_CAP) {
@@ -305,7 +317,6 @@ async function orderWorker(workerId) {
   }
 }
 
-// ── Live status line ────────────────────────────────────────────────────
 function printStatus() {
   const line = Object.values(categories)
     .map(c => `${c.name}: ${c.total - c.failed}/${c.total} (${c.rollingResults.filter(r => !r).length}/${c.rollingResults.length} فشل مؤخرًا)`)
@@ -313,7 +324,6 @@ function printStatus() {
   console.log(`[${new Date().toISOString().slice(11, 19)}] سائقين=${driversConnected} عمّال-طلبيات=${orderWorkers} :: ${line}`);
 }
 
-// ── Final report ─────────────────────────────────────────────────────────
 function printFinalReport() {
   console.log("\n\n════════════════ التقرير النهائي ════════════════");
   console.log(`\n✅ سائقين تمت الموافقة عليهم: ${approvedCount} | ❌ مرفوضين: ${rejectedCount} (نسبة الرفض المستهدفة: ${(REJECTION_RATE * 100).toFixed(0)}%)`);
@@ -349,7 +359,7 @@ process.on("SIGINT", () => {
 async function main() {
   console.log(`بدء الاختبار التدريجي — ${drivers.length} سائق، ${consumers.length} مستهلك متاحين\n`);
 
-  orderWorker(0); // start with 1 consumer worker
+  orderWorker(0);
   const statusInterval = setInterval(printStatus, 5000);
 
   await rampDrivers();
