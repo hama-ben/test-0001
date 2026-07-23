@@ -19,7 +19,7 @@ const router: IRouter = Router();
 // Daily order limit helpers
 // Algeria is UTC+1 year-round (Africa/Algiers, no DST).
 // ─────────────────────────────────────────────────────────────────────────────
-const DAILY_ORDER_LIMIT  = 3;
+const DAILY_ORDER_LIMIT  = Number(process.env.DAILY_ORDER_LIMIT) || 3; // override in staging only, e.g. for load testing — production must not set this env var
 const ALGERIA_OFFSET_MS  = 60 * 60 * 1000; // UTC+1
 
 function algeriaDateBoundaries(): { start: Date; end: Date; resetsAt: string } {
